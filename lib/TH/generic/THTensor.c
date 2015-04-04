@@ -752,4 +752,27 @@ real THTensor_(get4d)(const THTensor *tensor, long x0, long x1, long x2, long x3
   return THStorage_(get)(tensor->storage, tensor->storageOffset+x0*tensor->stride[0]+x1*tensor->stride[1]+x2*tensor->stride[2]+x3*tensor->stride[3]);
 }
 
+// leaks memory - use for error reporting only
+const char* THTensor_(sizeStr)(const THTensor *tensor) {
+  const int L = 64;
+  char* buf = malloc(L);
+  int n = 0;
+  n += snprintf(buf, L-n, "[");
+  int i;
+  for(i = 0; i < tensor->nDimension; i++) {
+    if(n >= L) break;
+    n += snprintf(buf+n, L-n, "%ld", tensor->size[i]);
+    if(i < tensor->nDimension-1) {
+      n += snprintf(buf+n, L-n, " x ");
+    }
+  }
+  if(n < L - 2) {
+    snprintf(buf+n, L-n, "]");
+  } else {
+    snprintf(buf+L-5, 5, "...]");
+  }
+  return buf;
+}
+
+
 #endif

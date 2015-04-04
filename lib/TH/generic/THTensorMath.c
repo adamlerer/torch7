@@ -493,14 +493,13 @@ void THTensor_(addmm)(THTensor *r_, real beta, THTensor *t, real alpha, THTensor
   char transpose_r, transpose_m1, transpose_m2;
   THTensor *r__, *m1_, *m2_;
 
-  if( (m1->nDimension != 2) || (m2->nDimension != 2) ) 
-    THError("matrix and matrix expected"); 
- 
-  if(t->nDimension != 2)
-    THError("size mismatch"); 
+  if( (m1->nDimension != 2) || (m2->nDimension != 2) || (t->nDimension != 2))
+    THError("addmm: matrices expected, got t: %s, m1: %s, m2: %s",
+        THTensor_(sizeStr)(t), THTensor_(sizeStr)(m1), THTensor_(sizeStr)(m2));
 
-  if( (t->size[0] != m1->size[0]) || (t->size[1] != m2->size[1]) || (m1->size[1] != m2->size[0]) ) 
-    THError("size mismatch"); 
+  if( (t->size[0] != m1->size[0]) || (t->size[1] != m2->size[1]) || (m1->size[1] != m2->size[0]) )
+    THError("addmm: size mismatch, t: %s, m1: %s, m2: %s",
+        THTensor_(sizeStr)(t), THTensor_(sizeStr)(m1), THTensor_(sizeStr)(m2));
 
   if(t != r_)
   {
