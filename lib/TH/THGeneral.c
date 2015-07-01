@@ -3,6 +3,7 @@
 #ifndef TH_HAVE_THREAD
 #define __thread
 #endif
+
 /* Torch Error Handling */
 static void defaultTorchErrorHandlerFunction(const char *msg, void *data)
 {
@@ -91,7 +92,7 @@ void THSetArgErrorHandler( void (*torchArgErrorHandlerFunction_)(int argNumber, 
   torchArgErrorHandlerData = data;
 }
 
-void* THAlloc(long size)
+void* defaultTHAlloc(long size, void *allocatorData)
 {
   void *ptr;
 
@@ -101,6 +102,7 @@ void* THAlloc(long size)
   if(size == 0)
     return NULL;
 
+  // duplicate code in GCAllocator.c; if you change this, change that
   if (size > 5120)
   {
 #if (defined(__unix) || defined(__APPLE__)) && (!defined(DISABLE_POSIX_MEMALIGN))
@@ -123,7 +125,7 @@ void* THAlloc(long size)
   return ptr;
 }
 
-void* THRealloc(void *ptr, long size)
+static void* defaultTHRealloc(void *ptr, long size, void *allocatorData)
 {
   if(!ptr)
     return(THAlloc(size));
@@ -138,14 +140,43 @@ void* THRealloc(void *ptr, long size)
     THError("$ Torch: invalid memory size -- maybe an overflow?");
 
   ptr = realloc(ptr, size);
+
   if(!ptr)
     THError("$ Torch: not enough memory: you tried to reallocate %dGB. Buy new RAM!", size/1073741824);
+
   return ptr;
 }
 
-void THFree(void *ptr)
+static void defaultTHFree(void *ptr, void *allocatorData)
 {
   free(ptr);
+}
+
+static __thread void* (*torchAllocFunction)(long size, void *allocatorData) = defaultTHAlloc;
+static __thread void* (*torchReallocFunction)(void *ptr, long size, void *allocatorData) = defaultTHRealloc;
+static __thread void (*torchFreeFunction)(void *ptr, void *allocatorData) = defaultTHFree;
+static __thread void *torchAllocatorData = NULL;
+
+void THSetAllocator(
+    void* (*allocFunction)(long size, void *allocatorData),
+    void* (*reallocFunction)(void *ptr, long size, void *allocatorData),
+    void (*freeFunction)(void *ptr, void *allocatorData),
+    void *allocatorData) {
+
+  torchAllocFunction   = allocFunction;
+  torchReallocFunction = reallocFunction;
+  torchFreeFunction    = freeFunction;
+  torchAllocatorData   = allocatorData;
+}
+
+void *THAlloc(long size) {
+  torchAllocFunction(size, torchAllocatorData);
+}
+void *THRealloc(void *ptr, long size) {
+  torchReallocFunction(ptr, size, torchAllocatorData);
+}
+void THFree(void *ptr) {
+  torchFreeFunction(ptr, torchAllocatorData);
 }
 
 double THLog1p(const double x)

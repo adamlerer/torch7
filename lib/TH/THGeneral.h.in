@@ -52,6 +52,11 @@ TH_API void THSetArgErrorHandler( void (*torchArgErrorHandlerFunction)(int argNu
 TH_API void* THAlloc(long size);
 TH_API void* THRealloc(void *ptr, long size);
 TH_API void THFree(void *ptr);
+void THSetAllocator(
+    void* (*allocFunction)(long size, void *allocatorData),
+    void* (*reallocFunction)(void *ptr, long size, void *allocatorData),
+    void (*freeFunction)(void *ptr, void *allocatorData),
+    void *allocatorData);
 
 #define THError(...) _THError(__FILE__, __LINE__, __VA_ARGS__)
 #define THArgCheck(...) _THArgCheck(__FILE__, __LINE__, __VA_ARGS__)
