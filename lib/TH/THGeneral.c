@@ -3,6 +3,14 @@
 #ifndef TH_HAVE_THREAD
 #define __thread
 #endif
+
+#if defined(TH_DISABLE_HEAP_TRACKING)
+#elif (defined(__unix) || defined(_WIN32))
+#include <malloc.h>
+#elif defined(__APPLE__)
+#include <malloc/malloc.h>
+#endif
+
 /* Torch Error Handling */
 static void defaultTorchErrorHandlerFunction(const char *msg, void *data)
 {
@@ -91,15 +99,64 @@ void THSetArgErrorHandler( void (*torchArgErrorHandlerFunction_)(int argNumber, 
   torchArgErrorHandlerData = data;
 }
 
-void* THAlloc(long size)
+static __thread void (*torchGCFunction)(void *data) = NULL;
+static __thread void *torchGCData;
+static __thread long torchHeapSize = 0;
+static __thread long torchHeapSizeSoftMaxTH = 300000000; // 300MB, adjusted upward dynamically
+
+/* Optional hook for integrating with a garbage-collected frontend.
+ *
+ * If torch is running with a garbage-collected frontend (e.g. Lua),
+ * the GC isn't aware of TH-allocated memory so may not know when it
+ * needs to run. These hooks trigger the GC to run in two cases:
+ * 
+ * (1) When a memory allocation (malloc, realloc, ...) fails
+ * (2) When the total TH-allocated memory hits a dynamically-adjusted
+ *     soft maximum.
+ */
+void THSetGCHandler( void (*torchGCFunction_)(void *data), void *data )
+{
+  torchGCFunction = torchGCFunction_;
+  torchGCData = data;
+}
+
+static long getAllocSize(void *ptr) {
+#if defined(TH_DISABLE_HEAP_TRACKING)
+  return 0;
+#elif defined(__unix)
+  return malloc_usable_size(ptr);
+#elif defined(__APPLE__)
+  return malloc_size(ptr);
+#elif defined(_WIN32)
+  return _msize(ptr);
+#else
+  return 0;
+#endif
+}
+
+/* (1) if the torch-allocated heap size exceeds the soft max, run GC
+ * (2) if post-GC heap size exceeds 80% of the soft max, increase the
+ *     soft max by 40%
+ */
+static void maybeTriggerGC() {
+  if(torchGCFunction && torchHeapSize > torchHeapSizeSoftMaxTH) {
+    torchGCFunction(torchGCData);
+    if(torchHeapSize > torchHeapSizeSoftMaxTH * 0.8) {
+      torchHeapSizeSoftMaxTH = torchHeapSize * 1.4;
+    }
+  }
+}
+
+static void heapIncr(void *ptr) {
+  torchHeapSize += getAllocSize(ptr);
+}
+static void heapDecr(void *ptr) {
+  torchHeapSize -= getAllocSize(ptr);
+}
+
+static void* THAllocInternal(long size)
 {
   void *ptr;
-
-  if(size < 0)
-    THError("$ Torch: invalid memory size -- maybe an overflow?");
-
-  if(size == 0)
-    return NULL;
 
   if (size > 5120)
   {
@@ -117,9 +174,31 @@ void* THAlloc(long size)
     ptr = malloc(size);
   }
 
+  heapIncr(ptr);
+  return ptr;
+}
+
+void* THAlloc(long size)
+{
+  void *ptr;
+
+  if(size < 0)
+    THError("$ Torch: invalid memory size -- maybe an overflow?");
+
+  if(size == 0)
+    return NULL;
+
+  ptr = THAllocInternal(size);
+
+  if(!ptr && torchGCFunction) {
+    torchGCFunction(torchGCData);
+    ptr = THAllocInternal(size);
+  }
+
   if(!ptr)
     THError("$ Torch: not enough memory: you tried to allocate %dGB. Buy new RAM!", size/1073741824);
 
+  maybeTriggerGC();
   return ptr;
 }
 
@@ -137,14 +216,25 @@ void* THRealloc(void *ptr, long size)
   if(size < 0)
     THError("$ Torch: invalid memory size -- maybe an overflow?");
 
-  ptr = realloc(ptr, size);
-  if(!ptr)
+  heapDecr(ptr);
+  void *newptr = realloc(ptr, size);
+
+  if(!newptr && torchGCFunction) {
+    torchGCFunction(torchGCData);
+    newptr = realloc(ptr, size);
+  }
+  heapIncr(newptr ? newptr : ptr);
+
+  if(!newptr)
     THError("$ Torch: not enough memory: you tried to reallocate %dGB. Buy new RAM!", size/1073741824);
-  return ptr;
+
+  maybeTriggerGC();
+  return newptr;
 }
 
 void THFree(void *ptr)
 {
+  heapDecr(ptr);
   free(ptr);
 }
 
